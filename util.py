@@ -1,5 +1,8 @@
 from __future__ import division
 import math
+from Crypto.Cipher import AES
+import sha1
+import base64
 
 message_ids = [ord('\x01'), ord('\x02'), ord('\x03'), ord('\x04'), ord('\x05')]
 
@@ -66,6 +69,18 @@ def get_length_in_bytes(value):
     while value > 0:
         value >>= 1
         length += 1
-    print value
-    print 'len', int(math.ceil(length / 8))
     return int(math.ceil(length / 8))
+
+
+def pad_for_aes(array):
+    return bytes(array + (16 - len(array))%16 * '\x00')
+
+def encrypt_message(array, master_secret):
+    aes = AES.new(sha1.digestToString(master_secret)[:16], AES.MODE_CBC, 16 * '\00')
+    return base64.b64encode(aes.encrypt(bytes(array + (16 - len(array))%16 * '\x00')))
+
+
+def decrypt_message(bytes, master_secret):
+    aes = AES.new(sha1.digestToString(master_secret)[:16], AES.MODE_CBC, 16 * '\00')
+    return bytearray(aes.decrypt(base64.b64decode(bytes)))
+

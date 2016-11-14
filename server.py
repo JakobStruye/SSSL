@@ -5,6 +5,9 @@ import socket
 import threading
 import sha1
 import rsa
+from Crypto.Cipher import AES
+import signal
+import sys
 
 class Server:
 
@@ -16,9 +19,10 @@ class Server:
     server_randoms = dict()
     master_secrets = dict()
     session_ids = dict()
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    aess = dict()
     private_key = 65537
     password = 'password' # todo replace with one password per user
+    n = 24837901994912053415060016243385475317417712009633224511631865509856785468222089587874860251372091919601558478355770440054191585009400476777668701239449326144867678301527398577112380301123866275016986424616254073665339078392065415659123211990097917959442335702306311914233567385024867631951672675219730316838578210434343067511636079081818744400113533624136339709745782321618533725900903084941132241555654812980180563388220808051884801391506840635505073310621874127072108865489246988967830314936790373122088161029787856707927049345768779125257912445784686277424030038539380288863347855630618237433032833865316901740219
 
 
     def __init__(self):
@@ -28,33 +32,32 @@ class Server:
             for _ in range(18):
                 key_hash_str += f.readline()
             key_hash_str = key_hash_str.replace('\n', '')
-            print key_hash_str
-            print base64.b64decode(key_hash_str)
             #self.keyHash = int(base64.b64decode(key_hash_str),16)
 
-            self.server_socket.bind(('0.0.0.0', 8970))
-            self.server_socket.listen(1024)  # become a server socket, maximum 1024 connections
+            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket.bind(('0.0.0.0', 8970))
+            server_socket.listen(1024)  # become a server socket, maximum 1024 connections
 
-            listen_thread = threading.Thread(target=self.listen)
+            listen_thread = threading.Thread(target=self.listen, args=(server_socket,))
             listen_thread.start()
             listen_thread.join()
 
         return
 
-    def listen(self):
+    def listen(self, server_socket):
         while True:
-            print 'listenloop'
-            conn, address = self.server_socket.accept()
+            print 'Listening for new connection...'
+            conn, address = server_socket.accept()
             self.connections.append(conn)
             self.statuses[conn] = 1
             process_thread = threading.Thread(target=self.process, args=(conn,))
             process_thread.start()
 
     def process(self, conn):
-        print 'processing'
+        print 'Setting up new connection...'
         while True:
             buf = conn.recv(99999)
-            if not buf :
+            if not buf:
                 break
             bytes_buf = bytearray(buf)
             if self.statuses[conn] == 1:
@@ -115,9 +118,9 @@ class Server:
             return '\x04'
         # todo certificate
         length = util.binary_to_int(message[1206:1208])
-        print length
-        pre_master = rsa.long_to_text(rsa.decrypt_rsa(util.binary_to_long(message[1208:1208+length]), self.private_key, 24837901994912053415060016243385475317417712009633224511631865509856785468222089587874860251372091919601558478355770440054191585009400476777668701239449326144867678301527398577112380301123866275016986424616254073665339078392065415659123211990097917959442335702306311914233567385024867631951672675219730316838578210434343067511636079081818744400113533624136339709745782321618533725900903084941132241555654812980180563388220808051884801391506840635505073310621874127072108865489246988967830314936790373122088161029787856707927049345768779125257912445784686277424030038539380288863347855630618237433032833865316901740219))
-        # todo masterkey
+
+        pre_master = rsa.long_to_text(rsa.decrypt_rsa(util.binary_to_long(message[1208:1208+length]), self.private_key, self.n), 48)
+
         if not message[1208+length:1228+length] == util.int_to_binary(sha1.sha1(self.password), 20):
             return '\x09'
         if not (message[1228+length] == ord('\xF0') and message[1229+length] == ord('\xF0')) :
@@ -125,18 +128,13 @@ class Server:
 
         server_random = self.server_randoms[conn]
         client_random = self.client_randoms[conn]
-        print type(pre_master)
-        print type(client_random)
-        print type(server_random)
+
         master_secret = \
-            sha1.sha1(pre_master + sha1.digestToString(sha1.sha1('A' + pre_master + client_random + server_random)))\
-            + sha1.sha1(pre_master + sha1.digestToString(sha1.sha1('BB' + pre_master + client_random + server_random)))\
-            + sha1.sha1(pre_master + sha1.digestToString(sha1.sha1('CCC' + pre_master + client_random + server_random)))
-        master_secret %= 2**textfac.
-        print master_secret
-        print util.get_length_in_bytes(master_secret)
-        master_secret >>= 32
-        print util.get_length_in_bytes(master_secret)
+            sha1.sha1(
+            sha1.digestToString(sha1.sha1(pre_master + sha1.digestToString(sha1.sha1('A' + pre_master + client_random + server_random))))\
+            + sha1.digestToString(sha1.sha1(pre_master + sha1.digestToString(sha1.sha1('BB' + pre_master + client_random + server_random))))\
+            + sha1.digestToString(sha1.sha1(pre_master + sha1.digestToString(sha1.sha1('CCC' + pre_master + client_random + server_random)))))
+
         self.master_secrets[conn] = master_secret
 
         return None
@@ -187,14 +185,14 @@ class Server:
         server_hello[1243:1245] = '\xF0\xF0'
         return server_hello
 
-
     def create_finished(self, conn):
         server_finished = bytearray((6) * '\x00', 'hex')
         server_finished[0] = '\x04'
         server_finished[1:3] = self.session_ids[conn]
         server_finished[3] = '\x00'
         server_finished[4:6] = '\xF0\xF0'
-        return server_finished
 
+        server_finished_encrypted = util.encrypt_message(server_finished, self.master_secrets[conn])
+        return server_finished_encrypted
 
 server = Server()

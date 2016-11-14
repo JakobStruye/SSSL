@@ -157,27 +157,3 @@ def sha1(a):
     hList = [int("67452301",16), int("EFCDAB89",16), int("98BADCFE",16), int("10325476",16), int("C3D2E1F0",16), 0]
 
     return sha1Internal(padA, hList)
-        
-
-
-
-if __name__ == '__main__':
-    #Get the hash for both the given string and a slightly modified one
-    text = 'Go placidly amid the noise and the haste, and remember what peace there may be in silence'
-    print "Hash for original string:"
-    hash1 = sha1(text)
-    printHexSHA1(hash1)
-
-    text = 'Go placidly amid the noise and the haste, and remember what peace there may be in silencd'
-    print "Hash for modified string:"
-    hash2 = sha1(text)
-    printHexSHA1(hash2)
-    difference = bin(hash1 ^ hash2)[2:]
-    diffCount = 0
-    totalCount = 0
-    for b in difference:
-        totalCount += 1
-        if b == '1':
-            diffCount += 1
-    print diffCount, "of", totalCount, "bits differ between the two hashes above"
-
