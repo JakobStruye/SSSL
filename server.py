@@ -8,39 +8,43 @@ import rsa
 from Crypto.Cipher import AES
 import signal
 import sys
+from OpenSSL import crypto
+import Crypto.PublicKey.RSA
+import M2Crypto
 
 class Server:
 
+    cert = 0
+    private_key = 0
     max_server_id = 0
     key_hash = 0
     connections = list()
     statuses = dict()
     client_randoms = dict()
     server_randoms = dict()
+    client_pubkeys = dict()
     master_secrets = dict()
     session_ids = dict()
     aess = dict()
-    private_key = 65537
-    password = 'password' # todo replace with one password per user
-    n = 24837901994912053415060016243385475317417712009633224511631865509856785468222089587874860251372091919601558478355770440054191585009400476777668701239449326144867678301527398577112380301123866275016986424616254073665339078392065415659123211990097917959442335702306311914233567385024867631951672675219730316838578210434343067511636079081818744400113533624136339709745782321618533725900903084941132241555654812980180563388220808051884801391506840635505073310621874127072108865489246988967830314936790373122088161029787856707927049345768779125257912445784686277424030038539380288863347855630618237433032833865316901740219
+    userID = "project-client"
+    password = "Konklave-123"
 
 
     def __init__(self):
-        with open('server-04.pem') as f:
-            f.readline() #skip
-            key_hash_str = ""
-            for _ in range(18):
-                key_hash_str += f.readline()
-            key_hash_str = key_hash_str.replace('\n', '')
-            #self.keyHash = int(base64.b64decode(key_hash_str),16)
+        with open('server-04.pem', 'rt') as f:
+            self.cert = util.text_to_binary(f.read())
+            self.cert = self.cert[0:len(self.cert)-1]
 
-            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server_socket.bind(('0.0.0.0', 8970))
-            server_socket.listen(1024)  # become a server socket, maximum 1024 connections
+        with open('server_prvkey.key', 'rt') as f:
+            self.private_key = Crypto.PublicKey.RSA.importKey(f.read())
 
-            listen_thread = threading.Thread(target=self.listen, args=(server_socket,))
-            listen_thread.start()
-            listen_thread.join()
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.bind(('0.0.0.0', 8970))
+        server_socket.listen(1024)  # become a server socket, maximum 1024 connections
+
+        listen_thread = threading.Thread(target=self.listen, args=(server_socket,))
+        listen_thread.start()
+        listen_thread.join()
 
         return
 
@@ -86,7 +90,7 @@ class Server:
 
 
     def process_hello(self, message, conn):
-
+        print "Received ClientHello"
         if len(message) < 39:
             print 'todo err'
         message_id = message[0]
@@ -106,7 +110,7 @@ class Server:
         return None
 
     def process_key_exchange(self, message, conn):
-
+        print "Received ClientKeyExchange"
         if len(message) < 1230:
             print 'todo err'
         message_id = message[0]
@@ -116,12 +120,16 @@ class Server:
             return '\x01'
         if not message[1:3] == self.session_ids[conn]:
             return '\x04'
-        # todo certificate
+        server_cert = crypto.load_certificate(crypto.FILETYPE_PEM, util.binary_to_text(message[3:1206]))
+        if server_cert.get_issuer().commonName != 'orion' or server_cert.has_expired() :
+            return '\x07'
+        self.client_pubkeys[conn] = Crypto.PublicKey.RSA.importKey(M2Crypto.X509.load_cert_string(message[3:1206]).get_pubkey().as_der())
+
         length = util.binary_to_int(message[1206:1208])
 
-        pre_master = rsa.long_to_text(rsa.decrypt_rsa(util.binary_to_long(message[1208:1208+length]), self.private_key, self.n), 48)
+        pre_master = rsa.long_to_text(rsa.decrypt_rsa(util.binary_to_long(message[1208:1208+length]), self.private_key.d, self.private_key.n), 48)
 
-        if not message[1208+length:1228+length] == util.int_to_binary(sha1.sha1(self.password), 20):
+        if not message[1208+length:1228+length] == util.int_to_binary(sha1.sha1(self.userID + self.password), 20):
             return '\x09'
         if not (message[1228+length] == ord('\xF0') and message[1229+length] == ord('\xF0')) :
             return '\x06' #todo reset conn
@@ -140,7 +148,7 @@ class Server:
         return None
 
     def process_finished(self, message, conn):
-
+        print "Received FinishedClient"
         if len(message) < 6:
             print 'todo err'
         message_id = message[0]
@@ -181,7 +189,7 @@ class Server:
 
         server_hello[37:39] = '\x00\x2F'
         server_hello[39] = '\x01'
-        #server_hello[40:1243] = util.hex_to_binary(self.keyHash, 1203)
+        server_hello[40:1243] = self.cert
         server_hello[1243:1245] = '\xF0\xF0'
         return server_hello
 

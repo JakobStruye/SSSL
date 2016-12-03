@@ -3,20 +3,31 @@ import util
 import rsa
 import sha1
 import socket
+from OpenSSL import crypto
+import Crypto.PublicKey.RSA
+import M2Crypto
+
 
 class Client:
 
+
+    cert = 0
     status = 0
     server_random = -1
     session_id = -1
+    server_pubkey = 0
     client_socket = None
     client_random = ''
     certificate_required = None
     master_secret = None
-    private_key = 15250199709679511075706852520218931920862586226950139938104500301373684948285528219578200125958795897780598922907027278290745917408384054580719454188842965572780727027101652369568717990401197110646024638603131783118232131092639581621182826911051011196270811088775862262795741611700499696997167352459934513622150108181418095826050696705549363779862358358393233189560520163106785535319492545898745183439109804783640231042277204269421962449461179792699246562139627266266067745221262954896564470537104834281630506800118219502588256417336585707762540909960941277936950557159506459454566798472128560135656506235741389170953
-    n = 24837901994912053415060016243385475317417712009633224511631865509856785468222089587874860251372091919601558478355770440054191585009400476777668701239449326144867678301527398577112380301123866275016986424616254073665339078392065415659123211990097917959442335702306311914233567385024867631951672675219730316838578210434343067511636079081818744400113533624136339709745782321618533725900903084941132241555654812980180563388220808051884801391506840635505073310621874127072108865489246988967830314936790373122088161029787856707927049345768779125257912445784686277424030038539380288863347855630618237433032833865316901740219
+    connection = None
+    userID = "project-client"
+    password = "Konklave-123"
 
     def __init__(self):
+        with open('client-05.pem', 'rt') as f:
+            self.cert = util.text_to_binary(f.read())
+            self.cert = self.cert[0:len(self.cert)-1]
         return
 
     def process(self, conn):
@@ -43,10 +54,12 @@ class Client:
                     self.send_error(conn, error)
                     return
                 self.status = -1
-                print 'connection setup'
+                print 'Connection setup'
+                self.connection = conn
+                return
 
     def process_hello(self, message, conn):
-
+        print "Received Server Hello"
         if len(message) < 1245:
             print 'todo err'
             return
@@ -63,14 +76,17 @@ class Client:
         self.session_id = message[35:37]
         if not (message[37] == ord('\x00') and message[38] == ord('\x2F')) :
             return '\x05'
-        self.certificate_required = message[37] == ord('\x01')
-        #todo certificate required
+        self.certificate_required = message[39] == ord('\x01')
+        server_cert = crypto.load_certificate(crypto.FILETYPE_PEM, util.binary_to_text(message[40:1243]))
+        if server_cert.get_issuer().commonName != 'orion' or server_cert.has_expired() :
+            return '\x07'
+        self.server_pubkey = Crypto.PublicKey.RSA.importKey(M2Crypto.X509.load_cert_string(message[40:1243]).get_pubkey().as_der())
         if not (message[1243] == ord('\xF0') and message[1244] == ord('\xF0')) :
             return '\x06' #todo reset conn
         return None
 
     def process_finished(self, message, conn):
-
+        print "Received FinishedServer"
         if len(message) < 6:
             print 'todo err'
             return
@@ -108,18 +124,17 @@ class Client:
         pre_master = ""
         for _ in range(48):
             pre_master += chr(random.randint(0,127))
-        # todo replace with actual server pub key
-        pre_master_encrypt = rsa.encrypt_rsa(rsa.text_to_decimal(pre_master), self.private_key, self.n)
+        pre_master_encrypt = rsa.encrypt_rsa(rsa.text_to_decimal(pre_master), self.server_pubkey.e, self.server_pubkey.n)
         key_length = util.get_length_in_bytes(pre_master_encrypt)
 
         # Actual message generation
         client_key_exchange = bytearray((1230 + key_length)  * '\x00', 'hex')
         client_key_exchange[0] = '\x03'
         client_key_exchange[1:3] = self.session_id
-        # todo certificate
+        client_key_exchange[3:1206] = self.cert
         client_key_exchange[1206:1208] = util.int_to_binary(key_length, 2)
         client_key_exchange[1208:1208+key_length] = util.int_to_binary(pre_master_encrypt, key_length)
-        client_key_exchange[1208+key_length:1228+key_length] = util.int_to_binary(sha1.sha1('password'), 20)
+        client_key_exchange[1208+key_length:1228+key_length] = util.int_to_binary(sha1.sha1(self.userID + self.password), 20)
         client_key_exchange[1228+key_length:1230+key_length] = '\xF0\xF0'
 
         self.master_secret = \
@@ -143,9 +158,14 @@ class Client:
     def connect(self, host, port):
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_socket.connect((host, port))
-        self.client_socket.send(client.create_hello())
-        client.status = 2
-        client.process(self.client_socket)
+        self.client_socket.send(self.create_hello())
+        self.status = 2
+        self.process(self.client_socket)
 
-client = Client()
-client.connect('localhost', 8970)
+    def disconnect(self):
+        if self.connection is not None:
+            self.connection.close()
+
+if __name__ == '__main__':
+    client = Client()
+    client.connect('localhost', 8970)
