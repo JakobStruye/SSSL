@@ -4,7 +4,9 @@ from Crypto.Cipher import AES
 import sha1
 import base64
 
-message_ids = [ord('\x01'), ord('\x02'), ord('\x03'), ord('\x04'), ord('\x05')]
+message_ids = [ord('\x01'), ord('\x02'), ord('\x03'), ord('\x04'), ord('\x05'), ord('\x06'), ord('\x07')]
+
+error_codes = {ord('\x01') : 'Unexpected message type'}
 
 def int_to_binary(a, length):
     if length < 1:
@@ -83,4 +85,10 @@ def encrypt_message(array, master_secret):
 def decrypt_message(bytes, master_secret):
     aes = AES.new(sha1.digestToString(master_secret)[:16], AES.MODE_CBC, 16 * '\00')
     return bytearray(aes.decrypt(base64.b64decode(bytes)))
+
+def get_error_message(error_code) :
+    if error_code in error_codes:
+        return error_codes[error_code]
+    return 'Unknown error'
+
 

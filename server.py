@@ -1,13 +1,9 @@
 import random
 import util
-import base64
 import socket
 import threading
 import sha1
 import rsa
-from Crypto.Cipher import AES
-import signal
-import sys
 from OpenSSL import crypto
 import Crypto.PublicKey.RSA
 import M2Crypto
@@ -26,18 +22,25 @@ class Server:
     master_secrets = dict()
     session_ids = dict()
     aess = dict()
-    userID = "project-client"
-    password = "Konklave-123"
+    accounts = dict()
 
 
-    def __init__(self):
-        with open('server-04.pem', 'rt') as f:
+    def __init__(self, certificate, key):
+        with open(certificate, 'rt') as f:
             self.cert = util.text_to_binary(f.read())
             self.cert = self.cert[0:len(self.cert)-1]
 
-        with open('server_prvkey.key', 'rt') as f:
+        with open(key, 'rt') as f:
             self.private_key = Crypto.PublicKey.RSA.importKey(f.read())
 
+    def add_account(self, username, password):
+        self.accounts[username] = sha1.sha1(username+password)
+
+
+    def add_account_hashed(self, username, digest):
+        self.accounts[username] = digest
+
+    def start(self):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.bind(('0.0.0.0', 8970))
         server_socket.listen(1024)  # become a server socket, maximum 1024 connections
@@ -64,6 +67,9 @@ class Server:
             if not buf:
                 break
             bytes_buf = bytearray(buf)
+            if bytes_buf[0] == ord('\x06'):
+                self.process_error_setup(bytes_buf, conn)
+                return
             if self.statuses[conn] == 1:
                 error = self.process_hello(bytes_buf, conn)
                 if error:
@@ -120,16 +126,15 @@ class Server:
             return '\x01'
         if not message[1:3] == self.session_ids[conn]:
             return '\x04'
-        server_cert = crypto.load_certificate(crypto.FILETYPE_PEM, util.binary_to_text(message[3:1206]))
-        if server_cert.get_issuer().commonName != 'orion' or server_cert.has_expired() :
+        client_cert = crypto.load_certificate(crypto.FILETYPE_PEM, util.binary_to_text(message[3:1206]))
+        if client_cert.get_issuer().commonName != 'orion' or client_cert.has_expired() :
             return '\x07'
         self.client_pubkeys[conn] = Crypto.PublicKey.RSA.importKey(M2Crypto.X509.load_cert_string(message[3:1206]).get_pubkey().as_der())
 
         length = util.binary_to_int(message[1206:1208])
 
         pre_master = rsa.long_to_text(rsa.decrypt_rsa(util.binary_to_long(message[1208:1208+length]), self.private_key.d, self.private_key.n), 48)
-
-        if not message[1208+length:1228+length] == util.int_to_binary(sha1.sha1(self.userID + self.password), 20):
+        if not message[1208+length:1228+length] == util.int_to_binary(self.accounts[client_cert.get_subject().commonName], 20):
             return '\x09'
         if not (message[1228+length] == ord('\xF0') and message[1229+length] == ord('\xF0')) :
             return '\x06' #todo reset conn
@@ -163,10 +168,46 @@ class Server:
             return '\x06' #todo reset conn
         return None
 
+    def process_error_setup(self, message, conn):
+        if len(message) < 4:
+            print 'Malformed error!'
+            return
+        print util.get_error_message(message[3])
+        conn.close()
+        return
+
+
+    def process_payload(self, message, conn):
+        print "Received Payload"
+        if len(message) < 7:
+            print 'todo err'
+        message_id = message[0]
+        if not util.is_known_message_id(message_id):
+            return '\x02'
+        if not message[0] == ord('\x07'):
+            return '\x01'
+        if not message[1:3] == self.session_ids[conn]:
+            return '\x04'
+        #skip state
+        if not (message[4] == ord('\xF0') and message[5] == ord('\xF0')) :
+            return '\x06' #todo reset conn
+        return None
+
+
 
     def send_error(self, conn, error_code):
-        print 'ERROR', ord(error_code)
+
+        error_message = bytearray(6 * '\x00', 'hex')
+        error_message[0] = '\x06'
+        error_message[1:3] = self.session_ids[conn]
+        error_message[3] = error_code
+        error_message[4:6] = '\xF0\xF0'
+        print 'Sending error:', util.get_error_message(error_message[3])
+
+        conn.send(error_message)
+        conn.close()
         return
+
 
     def create_hello(self, conn):
         server_hello = bytearray(1245 * '\x00', 'hex')
@@ -203,4 +244,9 @@ class Server:
         server_finished_encrypted = util.encrypt_message(server_finished, self.master_secrets[conn])
         return server_finished_encrypted
 
-server = Server()
+
+
+if __name__ == '__main__':
+    server = Server('server-04.pem', 'server_prvkey.key')
+    server.add_account('project-client', 'Konklave123')
+    server.start()

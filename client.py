@@ -21,11 +21,13 @@ class Client:
     certificate_required = None
     master_secret = None
     connection = None
-    userID = "project-client"
-    password = "Konklave-123"
+    userID = ''
+    password = ''
 
-    def __init__(self):
-        with open('client-05.pem', 'rt') as f:
+    def __init__(self, certificate, userID, password):
+        self.userID = userID
+        self.password = password
+        with open(certificate, 'rt') as f:
             self.cert = util.text_to_binary(f.read())
             self.cert = self.cert[0:len(self.cert)-1]
         return
@@ -37,11 +39,14 @@ class Client:
             if not buf :
                 break
             bytes_buf = bytearray(buf)
+            if bytes_buf[0] == ord('\x06'):
+                self.process_error_setup(bytes_buf, conn)
+                return error
             if self.status == 2:
                 error = self.process_hello(bytes_buf, conn)
                 if error:
                     self.send_error(conn, error)
-                    return
+                    return error
                 conn.send(self.create_key_exchange())
                 #send reply
                 conn.send(self.create_finished())
@@ -52,11 +57,12 @@ class Client:
                 error = self.process_finished(bytes_buf, conn)
                 if error:
                     self.send_error(conn, error)
-                    return
+                    return error
                 self.status = -1
                 print 'Connection setup'
                 self.connection = conn
-                return
+                return 0
+        return 1 #something failed
 
     def process_hello(self, message, conn):
         print "Received Server Hello"
@@ -102,8 +108,25 @@ class Client:
             return '\x06' #todo reset conn
         return None
 
+    def process_error_setup(self, message, conn):
+        if len(message) < 4:
+            print 'Malformed error!'
+            return
+        print "Received error:", util.get_error_message(message[3])
+        conn.close()
+        return
+
     def send_error(self, conn, error_code):
-        print 'ERROR', ord(error_code)
+
+        error_message = bytearray(6 * '\x00', 'hex')
+        error_message[0] = '\x06'
+        error_message[1:3] = self.session_ids[conn]
+        error_message[3] = error_code
+        error_message[4:6] = '\xF0\xF0'
+
+        print 'Sending error:', util.get_error_message(error_message[3])
+        conn.send(error_message)
+        conn.close()
         return
 
     def create_hello(self):
@@ -166,6 +189,28 @@ class Client:
         if self.connection is not None:
             self.connection.close()
 
+    def send_payload(self, payload):
+        length = len(payload)
+        if length > 65536:
+            print "payload too big todo"
+            return
+        client_message = bytearray((7 + length) * '\x00', 'hex')
+        client_message[0] = '\x07'
+        client_message[1:3] = self.session_id
+        client_message[3:5] = util.int_to_binary(length, 2)
+        client_message[5:5+length] = payload
+        client_message[5+length:5+length+2] = '\xF0\xF0'
+        self.connection.send(client_message)
+
+
+
+
+
+
 if __name__ == '__main__':
-    client = Client()
-    client.connect('localhost', 8970)
+    client = Client('client-05.pem', 'project-client', 'Konklave123')
+    error = client.connect('localhost', 8970)
+    if error == 0:
+        client.send_payload('\x01\x02')
+
+
