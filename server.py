@@ -98,16 +98,18 @@ class Server:
                 self.statuses[conn] = -1
                 print 'Connection setup'
             elif self.statuses[conn] == -1: #receiving payloads
-                error, reply = self.process_payload(util.decrypt_message(bytes_buf, self.master_secrets[conn]), conn)
+                error, replies = self.process_payload(util.decrypt_message(bytes_buf, self.master_secrets[conn]), conn)
                 if error:
                     self.send_error(conn, error)
                     return
                 # send reply
 
-                if reply:
-                    print reply
-                    conn.send(self.create_payload(reply, conn))
-                    print "SENT REPLY"
+                if replies:
+                    for reply in replies:
+                        print reply
+                        conn.send(self.create_payload(reply, conn))
+                        print "SENT REPLY"
+                        threading._sleep(0.001)
 
 
     def process_hello(self, message, conn):
@@ -212,10 +214,10 @@ class Server:
             print 'todo err'
         payload = message[5:5+length]
 
-        reply = self.payload_listener.callback(payload, self.user_ids[conn])
+        replies = self.payload_listener.callback(payload, self.user_ids[conn])
         if not (message[5+length] == ord('\xF0') and message[6+length] == ord('\xF0')) :
             return '\x06', None #todo reset conn
-        return None, reply
+        return None, replies
 
 
 
