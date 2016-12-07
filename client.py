@@ -11,10 +11,7 @@ import M2Crypto
 
 class Client:
 
-
-    def __init__(self, certificate, userID, password):
-
-
+    def __init__(self, certificate, user_id, password):
 
         self.cert = 0
         self.status = 0
@@ -26,23 +23,26 @@ class Client:
         self.certificate_required = None
         self.master_secret = None
         self.connection = None
-        self.userID = userID
+        self.userID = user_id
         self.password = password
         self.payload_listener = None
+
+        # Read certificate from file, chop off final newline
         with open(certificate, 'rt') as f:
             self.cert = util.text_to_binary(f.read())
             self.cert = self.cert[0:len(self.cert)-1]
         return
 
+    # Start listening for, processing and replying to connection setup messages
     def process(self, conn):
         print 'Setting up connection...'
         while True:
             buf = conn.recv(99999)
-            if not buf :
+            if not buf:
                 break
             bytes_buf = bytearray(buf)
             if bytes_buf[0] == ord('\x06'):
-                self.process_error_setup(bytes_buf, conn)
+                error = self.process_error_setup(bytes_buf, conn)
                 return error
             if self.status == 2:
                 error = self.process_hello(bytes_buf, conn)
@@ -50,7 +50,6 @@ class Client:
                     self.send_error(conn, error)
                     return error
                 conn.send(self.create_key_exchange())
-                #send reply
                 conn.send(self.create_finished())
                 self.status = 5
             elif self.status == 5:
@@ -65,9 +64,9 @@ class Client:
                 self.connection = conn
                 listen_thread = threading.Thread(target=self.listen_payloads, args=(conn,))
                 listen_thread.start()
-                return 0 #success
+                return 0 # success
 
-
+    # Start listening for, processing and replying to payload messages
     def listen_payloads(self, conn):
         while True:
             buf = conn.recv(99999)
@@ -78,17 +77,15 @@ class Client:
                 self.process_error_setup(bytes_buf, conn)
                 return error
 
-            elif self.status == -1: #receiving payloads
+            elif self.status == -1: # receiving payloads
                 error, reply = self.process_payload(bytes_buf, conn)
                 if error:
                     self.send_error(conn, error)
                     return
-                # send reply
 
                 if reply:
                     print reply
                     conn.send(self.create_payload(reply, conn))
-                    print "SENT REPLY"
 
 
     def process_hello(self, message, conn):
@@ -141,7 +138,7 @@ class Client:
             return
         print "Received error:", util.get_error_message(message[3])
         conn.close()
-        return
+        return message[3]
 
     def process_payload(self, message, conn):
         print "Received Payload"
@@ -260,14 +257,10 @@ class Client:
     def add_payload_listener(self, listener):
         self.payload_listener = listener
 
-
-
-
-
 if __name__ == '__main__':
     client = Client('client-05.pem', 'project-client', 'Konklave123')
-    error = client.connect('localhost', 8970)
-    if error == 0:
+    error_connect = client.connect('localhost', 8970)
+    if error_connect == 0:
         client.send_payload('\x01\x02')
 
 

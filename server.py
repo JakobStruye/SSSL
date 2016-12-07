@@ -106,10 +106,9 @@ class Server:
 
                 if replies:
                     for reply in replies:
-                        print reply
                         conn.send(self.create_payload(reply, conn))
                         print "SENT REPLY"
-                        threading._sleep(0.001)
+                        threading._sleep(0.01)
 
 
     def process_hello(self, message, conn):
