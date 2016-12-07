@@ -10,22 +10,26 @@ import M2Crypto
 
 class Server:
 
-    cert = 0
-    private_key = 0
-    max_server_id = 0
-    key_hash = 0
-    connections = list()
-    statuses = dict()
-    client_randoms = dict()
-    server_randoms = dict()
-    client_pubkeys = dict()
-    master_secrets = dict()
-    session_ids = dict()
-    aess = dict()
-    accounts = dict()
+
 
 
     def __init__(self, certificate, key):
+
+        self.cert = 0
+        self.private_key = 0
+        self.max_server_id = 0
+        self.key_hash = 0
+        self.connections = list()
+        self.statuses = dict()
+        self.client_randoms = dict()
+        self.server_randoms = dict()
+        self.client_pubkeys = dict()
+        self.master_secrets = dict()
+        self.session_ids = dict()
+        self.user_ids = dict()
+        self.aess = dict()
+        self.accounts = dict()
+        self.payload_listener = None
         with open(certificate, 'rt') as f:
             self.cert = util.text_to_binary(f.read())
             self.cert = self.cert[0:len(self.cert)-1]
@@ -47,7 +51,7 @@ class Server:
 
         listen_thread = threading.Thread(target=self.listen, args=(server_socket,))
         listen_thread.start()
-        listen_thread.join()
+        #listen_thread.join()
 
         return
 
@@ -93,6 +97,17 @@ class Server:
                 conn.send(self.create_finished(conn))
                 self.statuses[conn] = -1
                 print 'Connection setup'
+            elif self.statuses[conn] == -1: #receiving payloads
+                error, reply = self.process_payload(util.decrypt_message(bytes_buf, self.master_secrets[conn]), conn)
+                if error:
+                    self.send_error(conn, error)
+                    return
+                # send reply
+
+                if reply:
+                    print reply
+                    conn.send(self.create_payload(reply, conn))
+                    print "SENT REPLY"
 
 
     def process_hello(self, message, conn):
@@ -134,8 +149,10 @@ class Server:
         length = util.binary_to_int(message[1206:1208])
 
         pre_master = rsa.long_to_text(rsa.decrypt_rsa(util.binary_to_long(message[1208:1208+length]), self.private_key.d, self.private_key.n), 48)
-        if not message[1208+length:1228+length] == util.int_to_binary(self.accounts[client_cert.get_subject().commonName], 20):
+        user_id = client_cert.get_subject().commonName
+        if not message[1208+length:1228+length] == util.int_to_binary(self.accounts[user_id], 20):
             return '\x09'
+        self.user_ids[conn] = user_id
         if not (message[1228+length] == ord('\xF0') and message[1229+length] == ord('\xF0')) :
             return '\x06' #todo reset conn
 
@@ -183,15 +200,22 @@ class Server:
             print 'todo err'
         message_id = message[0]
         if not util.is_known_message_id(message_id):
-            return '\x02'
+            return '\x02', None
         if not message[0] == ord('\x07'):
-            return '\x01'
+            return '\x01', None
         if not message[1:3] == self.session_ids[conn]:
-            return '\x04'
-        #skip state
-        if not (message[4] == ord('\xF0') and message[5] == ord('\xF0')) :
-            return '\x06' #todo reset conn
-        return None
+            return '\x04', None
+    
+        length = util.binary_to_int(message[3:5])
+
+        if len(message) < 7 + length:
+            print 'todo err'
+        payload = message[5:5+length]
+
+        reply = self.payload_listener.callback(payload, self.user_ids[conn])
+        if not (message[5+length] == ord('\xF0') and message[6+length] == ord('\xF0')) :
+            return '\x06', None #todo reset conn
+        return None, reply
 
 
 
@@ -244,6 +268,25 @@ class Server:
         server_finished_encrypted = util.encrypt_message(server_finished, self.master_secrets[conn])
         return server_finished_encrypted
 
+    def create_payload(self, payload, conn):
+        length = len(payload)
+        if length > 65536:
+            print "payload too big todo"
+            return
+        server_message = bytearray((7 + length) * '\x00', 'hex')
+        server_message[0] = '\x07'
+        server_message[1:3] = self.session_ids[conn]
+        server_message[3:5] = util.int_to_binary(length, 2)
+        server_message[5:5+length] = payload
+        server_message[5+length:5+length+2] = '\xF0\xF0'
+
+        server_message_encrypted = util.encrypt_message(server_message, self.master_secrets[conn])
+
+        return server_message_encrypted
+
+
+    def add_payload_listener(self, listener):
+        self.payload_listener = listener
 
 
 if __name__ == '__main__':

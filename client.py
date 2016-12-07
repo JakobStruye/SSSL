@@ -3,6 +3,7 @@ import util
 import rsa
 import sha1
 import socket
+import threading
 from OpenSSL import crypto
 import Crypto.PublicKey.RSA
 import M2Crypto
@@ -11,22 +12,23 @@ import M2Crypto
 class Client:
 
 
-    cert = 0
-    status = 0
-    server_random = -1
-    session_id = -1
-    server_pubkey = 0
-    client_socket = None
-    client_random = ''
-    certificate_required = None
-    master_secret = None
-    connection = None
-    userID = ''
-    password = ''
-
     def __init__(self, certificate, userID, password):
+
+
+
+        self.cert = 0
+        self.status = 0
+        self.server_random = -1
+        self.session_id = -1
+        self.server_pubkey = 0
+        self.client_socket = None
+        self.client_random = ''
+        self.certificate_required = None
+        self.master_secret = None
+        self.connection = None
         self.userID = userID
         self.password = password
+        self.payload_listener = None
         with open(certificate, 'rt') as f:
             self.cert = util.text_to_binary(f.read())
             self.cert = self.cert[0:len(self.cert)-1]
@@ -61,8 +63,33 @@ class Client:
                 self.status = -1
                 print 'Connection setup'
                 self.connection = conn
-                return 0
-        return 1 #something failed
+                listen_thread = threading.Thread(target=self.listen_payloads, args=(conn,))
+                listen_thread.start()
+                return 0 #success
+
+
+    def listen_payloads(self, conn):
+        while True:
+            buf = conn.recv(99999)
+            if not buf :
+                break
+            bytes_buf = util.decrypt_message(bytearray(buf), self.master_secret)
+            if bytes_buf[0] == ord('\x06'):
+                self.process_error_setup(bytes_buf, conn)
+                return error
+
+            elif self.status == -1: #receiving payloads
+                error, reply = self.process_payload(bytes_buf, conn)
+                if error:
+                    self.send_error(conn, error)
+                    return
+                # send reply
+
+                if reply:
+                    print reply
+                    conn.send(self.create_payload(reply, conn))
+                    print "SENT REPLY"
+
 
     def process_hello(self, message, conn):
         print "Received Server Hello"
@@ -115,6 +142,30 @@ class Client:
         print "Received error:", util.get_error_message(message[3])
         conn.close()
         return
+
+    def process_payload(self, message, conn):
+        print "Received Payload"
+        if len(message) < 7:
+            print 'todo err'
+        message_id = message[0]
+        if not util.is_known_message_id(message_id):
+            return '\x02', None
+        if not message[0] == ord('\x07'):
+            return '\x01', None
+        if not message[1:3] == self.session_id:
+            return '\x04', None
+    
+        length = util.binary_to_int(message[3:5])
+
+        if len(message) < 7 + length:
+            print 'todo err'
+        payload = message[5:5+length]
+
+        reply = self.payload_listener.callback_client(payload, self)
+        if not (message[5+length] == ord('\xF0') and message[6+length] == ord('\xF0')) :
+            return '\x06', None #todo reset conn
+        return None, reply
+
 
     def send_error(self, conn, error_code):
 
@@ -183,7 +234,7 @@ class Client:
         self.client_socket.connect((host, port))
         self.client_socket.send(self.create_hello())
         self.status = 2
-        self.process(self.client_socket)
+        return self.process(self.client_socket)
 
     def disconnect(self):
         if self.connection is not None:
@@ -200,8 +251,14 @@ class Client:
         client_message[3:5] = util.int_to_binary(length, 2)
         client_message[5:5+length] = payload
         client_message[5+length:5+length+2] = '\xF0\xF0'
-        self.connection.send(client_message)
 
+        client_message_encrypted = util.encrypt_message(client_message, self.master_secret)
+
+        self.connection.send(client_message_encrypted)
+
+
+    def add_payload_listener(self, listener):
+        self.payload_listener = listener
 
 
 
