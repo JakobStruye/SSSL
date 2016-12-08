@@ -6,7 +6,17 @@ import base64
 
 message_ids = [ord('\x01'), ord('\x02'), ord('\x03'), ord('\x04'), ord('\x05'), ord('\x06'), ord('\x07')]
 
-error_codes = {ord('\x01') : 'Unexpected message type'}
+error_codes = {ord('\x01') : 'Unexpected message type',
+               ord('\x02') : "Unknown message type",
+               ord('\x03') : "Length error",
+               ord('\x04') : "Bad Session ID",
+               ord('\x05') : "Unsupported field",
+               ord('\x06') : "Unsupported structure",
+               ord('\x07') : "Incorrect server certificate",
+               ord('\x08') : "Incorrect client certificate",
+               ord('\x09') : "Incorrect login",
+               ord('\x0A') : "Bad Encryption",
+               ord('\x0B') : "Unknown error"}
 
 def int_to_binary(a, length):
     if length < 1:
