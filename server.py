@@ -127,7 +127,6 @@ class Server:
                     for reply in replies:
                         conn.send(self.create_payload(reply, conn))
                         print "SENT REPLY"
-                        threading.sleep(0.01)
 
             self.buffers[conn] = self.buffers[conn][next_length+5:]
 
