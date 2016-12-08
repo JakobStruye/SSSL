@@ -7,7 +7,7 @@ import rsa
 from OpenSSL import crypto
 import Crypto.PublicKey.RSA
 import M2Crypto
-import sys
+import time
 
 class Server:
 
@@ -18,7 +18,7 @@ class Server:
 
         self.cert = 0
         self.private_key = 0
-        self.max_server_id = 0
+        self.max_server_id = 1
         self.key_hash = 0
         self.connections = list()
         self.statuses = dict()
@@ -69,19 +69,21 @@ class Server:
     def process(self, conn):
         self.buffers[conn] = bytearray()
         print 'Setting up new connection...'
+        skip_recv = False
         while True:
-            buf = conn.recv(8)
-            print "RECEIVED"
-            if not buf:
-                break
-            bytes_buf = bytearray(buf)
-            self.buffers[conn].extend(bytes_buf)
+            if not skip_recv:
+                buf = conn.recv(8)
+                if not buf:
+                    break
+                bytes_buf = bytearray(buf)
+                self.buffers[conn].extend(bytes_buf)
             if len(self.buffers[conn]) < 5:
+                skip_recv = False
                 continue # Don't have length yet, can't do anything
             next_length = util.binary_to_int(self.buffers[conn][1:5])
 
             if len(self.buffers[conn]) < next_length + 5:
-                print "2SHORT", len(self.buffers[conn]), next_length
+                skip_recv = False
                 continue # Don't have full packet yet, can't do anything
 
             packet = self.buffers[conn][:next_length+5]
@@ -124,10 +126,12 @@ class Server:
                 # send reply
 
                 elif replies:
+                    print "I HAVE REPLIES", len(replies)
                     for reply in replies:
-                        conn.send(self.create_payload(reply, conn))
-                        print "SENT REPLY"
+                        reply_packet = self.create_payload(reply, conn)
+                        conn.sendall(reply_packet)
 
+            skip_recv = True
             self.buffers[conn] = self.buffers[conn][next_length+5:]
 
 
@@ -281,7 +285,6 @@ class Server:
         server_hello[43] = '\x01'
         server_hello[44:1247] = self.cert
         server_hello[1247:1249] = '\xF0\xF0'
-        print "CREATED HELLO"
 
         return server_hello
 
@@ -296,11 +299,11 @@ class Server:
 
         server_finished[1:5] = util.int_to_binary(len(server_finished_encrypted_part), 4)
         server_finished.extend(server_finished_encrypted_part)
-        print server_finished[0], "FIN"
         return server_finished
 
     def create_payload(self, payload, conn):
         length = len(payload)
+        #print "PAYL AT SERV", length
         if length > 16777000:
             print "payload too big todo"
             return
@@ -310,6 +313,7 @@ class Server:
         server_message_to_encrypt = bytearray((6+length) * '\x00', 'hex')
         server_message_to_encrypt[0:2] = self.session_ids[conn]
         server_message_to_encrypt[2:4] = util.int_to_binary(length, 2)
+        print "ENCODEDLENGTH", util.binary_to_int(server_message_to_encrypt[2:4]), server_message_to_encrypt[2], server_message_to_encrypt[3]
         server_message_to_encrypt[4:4+length] = payload
         server_message_to_encrypt[4+length:4+length+2] = '\xF0\xF0'
 

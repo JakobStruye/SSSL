@@ -3,11 +3,11 @@ import util
 import rsa
 import sha1
 import socket
-import threading
+import time
 from OpenSSL import crypto
 import Crypto.PublicKey.RSA
 import M2Crypto
-import sys
+import threading
 
 
 class Client:
@@ -58,7 +58,7 @@ class Client:
             if packet[0] == ord('\x06'):
                 error = self.process_error_setup(packet, conn)
                 return error
-            if self.status == 2:
+            elif self.status == 2:
                 error = self.process_hello(packet, conn)
                 if error:
                     self.send_error(conn, error)
@@ -66,7 +66,7 @@ class Client:
                 conn.send(self.create_key_exchange())
                 conn.send(self.create_finished())
                 self.status = 5
-                self.buffer = self.buffer[next_length+5:]
+
             elif self.status == 5:
                 decrypt_buf = util.decrypt_message(packet[5:next_length+5], self.master_secret)
 
@@ -76,43 +76,45 @@ class Client:
                     return error
                 self.status = -1
                 self.buffer = self.buffer[next_length+5:]
-                print 'Connection setup'
+                print 'Connection setup', len(self.buffer)
                 self.connection = conn
                 listen_thread = threading.Thread(target=self.listen_payloads, args=(conn,))
                 listen_thread.start()
                 return 0 # success
+            self.buffer = self.buffer[next_length + 5:]
 
     # Start listening for, processing and replying to payload messages
     def listen_payloads(self, conn):
+        skip_recv = False
         while True:
-            buf = conn.recv(4096)
-            if not buf :
-                break
-            bytes_buf = bytearray(buf)
+            if not skip_recv:
 
-            self.buffer.extend(bytes_buf)
-            if len(self.buffer) > 5:
+                buf = conn.recv(128)
+                if not buf:
+                    break
+                bytes_buf = bytearray(buf)
+
+                self.buffer.extend(bytes_buf)
+            if len(self.buffer) < 5:
+                skip_recv = False
                 continue # Don't have length yet, can't do anything
             next_length = util.binary_to_int(self.buffer[1:5])
+            #print "NEXT LENGTH", next_length
 
             if len(self.buffer) < next_length + 5:
+                skip_recv = False
                 continue # Don't have full packet yet, can't do anything
-
             packet = self.buffer[0:5] + util.decrypt_message(self.buffer[5:next_length+5], self.master_secret)
 
             if packet[0] == ord('\x06'):
-                self.process_error_setup(packet, conn)
+                error = self.process_error_setup(packet, conn)
                 return error
 
             elif self.status == -1: # receiving payloads
-                error, reply = self.process_payload(packet, conn)
-                if error:
-                    self.send_error(conn, error)
-                    return
+                self.process_payload(packet, conn)
+            skip_recv = True
+            self.buffer = self.buffer[next_length + 5:]
 
-                if reply:
-                    print reply
-                    conn.send(self.create_payload(reply, conn))
 
 
     def process_hello(self, message, conn):
@@ -168,7 +170,7 @@ class Client:
         return message[7]
 
     def process_payload(self, message, conn):
-        print "Received Payload"
+        #print "Received Payload"
         if len(message) < 11:
             print 'todo err'
         message_id = message[0]
@@ -178,9 +180,13 @@ class Client:
             return '\x01', None
         if not message[5:7] == self.session_id:
             return '\x04', None
-    
+
+        #print "SESSID CLIENT"
+        #print message[5:7]
         length = util.binary_to_int(message[7:9])
 
+        print "LEN PAYL", length, message[7], message[8]
+        #print "LEN PAYL ACTUAL", len(message[9:-2])
         """if len(message) < 7 + length:
             print 'todo err'"""
         payload = message[9:9+length]
@@ -191,6 +197,7 @@ class Client:
         reply = self.payload_listener.callback_client(payload, self)
         if not (message[9+length] == ord('\xF0') and message[10+length] == ord('\xF0')) :
             return '\x06', None #todo reset conn
+        print "REMAINING", len(message[11+length:])
         return None, reply
 
 
@@ -289,7 +296,7 @@ class Client:
         client_message_encrypted = util.encrypt_message(client_message_to_encrypt, self.master_secret)
 
         client_message[1:5] = util.int_to_binary(len(client_message_encrypted), 4)
-        print "SENT PAYLOAD"
+        #print "SENT PAYLOAD"
         self.connection.send(client_message + client_message_encrypted)
 
 
