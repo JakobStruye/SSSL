@@ -309,12 +309,10 @@ class Server:
 
     # Process error message received during setup phase and close connection
     def process_error(self, message, conn):
-        # MAY ALSO BE FROM LATE SETUP
-        print 'todo err'
         if len(message) != 10:
             print 'Malformed error!'
             return
-        print "Received error:", util.get_error_message(message[7])
+        print "Received error at server:", util.get_error_message(message[7])
         return
 
     # Process error message received during setup phase and close connection
@@ -322,13 +320,13 @@ class Server:
         if len(message) != 10:
             print 'Malformed error!'
             return
-        print "Received error:", util.get_error_message(message[7])
+        print "Received error at server:", util.get_error_message(message[7])
         conn.close()
         return
 
     # Process a received payload packet
     def process_payload(self, message, conn):
-        print "Received Payload"
+        print "Received payload at server"
         if len(message) < 12:
             return '\x03', None
         # Validate some bytes
@@ -371,7 +369,7 @@ class Server:
             error_message[5:7] = '\x00\x00'  # session ID not yet generated, can't send it
         error_message[7] = error_code
         error_message[8:10] = '\xF0\xF0'
-        print 'Sending error:', util.get_error_message(error_message[7])
+        print 'Sending error from server:', util.get_error_message(error_message[7])
 
         conn.send(error_message)
         conn.close()
@@ -389,7 +387,7 @@ class Server:
             error_message[5:7] = '\x00\x00'  # session ID not yet generated, can't send it
         error_message[7] = error_code
         error_message[8:10] = '\xF0\xF0'
-        print 'Sending error:', util.get_error_message(error_message[7]), self.secure_error_count[conn]
+        print 'Sending error from server:', util.get_error_message(error_message[7]), self.secure_error_count[conn]
 
         conn.send(error_message)
         self.secure_error_count[conn] += 1
@@ -425,7 +423,7 @@ class Server:
         server_hello[43] = '\x01'
         server_hello[44:1247] = self.cert
         server_hello[1247:1249] = '\xF0\xF0'
-
+        print "Sent ServerHello"
         return server_hello
 
     # Create a server_finished
@@ -444,6 +442,7 @@ class Server:
         # Get length of encrypted part, send concatenation of the two parts
         server_finished[1:5] = util.int_to_binary(len(server_finished_encrypted_part), 4)
         server_finished.extend(server_finished_encrypted_part)
+        print "Sent FinishedServer"
         return server_finished
 
     # Create a payload packet
@@ -451,7 +450,6 @@ class Server:
         length = len(payload)  # Unencrypted length
 
         if length > 4294967200:
-            print "payload too big todo"
             return
 
         # First 5 bytes not encrypted
@@ -468,7 +466,7 @@ class Server:
 
         # Get length of encrypted part, send concatenation of the two parts
         server_message[1:5] = util.int_to_binary(len(server_message_encrypted), 4)
-
+        print "Sent payload from server"
         return server_message + server_message_encrypted
 
     # Set the listener to be called on receiving payload

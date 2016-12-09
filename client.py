@@ -27,7 +27,6 @@ class Client:
         self.buffer = bytearray()  # The receive buffer
         self.secure_error_count = 0
 
-
         self.is_connected = False  # True if there is currently a connection setup to the server
 
         # Read certificate from file, chop off final newline
@@ -212,7 +211,7 @@ class Client:
         if len(message) != 10:
             print 'Malformed error!'
             return
-        print "Received error:", util.get_error_message(message[7])
+        print "Received error at client:", util.get_error_message(message[7])
         conn.close()
         return message[7]
 
@@ -221,12 +220,13 @@ class Client:
         if len(message) != 10:
             print 'Malformed error!'
             return
-        print "Received error:", util.get_error_message(message[7])
+        print "Received error at client:", util.get_error_message(message[7])
 
     # Process incoming payload
     def process_payload(self, message, conn):
+        print "Received payload at client"
         if len(message) < 12:
-            print '\x03', None
+            return '\x03'
         # Validate some bytes
         message_id = message[0]
         if not util.is_known_message_id(message_id):
@@ -268,7 +268,7 @@ class Client:
         error_message[7] = error_code
         error_message[8:10] = '\xF0\xF0'
 
-        print 'Sending error:', util.get_error_message(error_message[7])
+        print 'Sending error from client:', util.get_error_message(error_message[7])
         conn.send(error_message)
         conn.close()
         return
@@ -286,7 +286,7 @@ class Client:
         error_message[7] = error_code
         error_message[8:10] = '\xF0\xF0'
 
-        print 'Sending error:', util.get_error_message(error_message[7])
+        print 'Sending error from client:', util.get_error_message(error_message[7])
         conn.send(error_message)
 
         self.secure_error_count += 1
@@ -309,6 +309,7 @@ class Client:
         client_hello[7:39] = util.text_to_binary(self.client_random)
         client_hello[39:41] = '\x00\x2F'
         client_hello[41:43] = '\xF0\xF0'
+        print "Sent ClientHello"
         return client_hello
 
     # Create a client_key_exchange packet
@@ -345,6 +346,7 @@ class Client:
                 + sha1.digestToString(sha1.sha1(pre_master + sha1.digestToString(
                     sha1.sha1('CCC' + pre_master + self.client_random + self.server_random)))))
 
+        print "Sent ClientKeyExchange"
         return client_key_exchange
 
     # Create a client_finished packet
@@ -357,6 +359,7 @@ class Client:
         client_finished[7] = '\x00'
         client_finished[8:10] = '\xF0\xF0'
 
+        print "Sent FinishedClient"
         return client_finished
 
     # Open a connection to a server
@@ -377,7 +380,6 @@ class Client:
     def send_payload(self, payload):
         length = len(payload)
         if length > 4294967200:
-            print "payload too big todo"
             return
 
         # First 5 bytes not encrypted
@@ -395,6 +397,8 @@ class Client:
         # Get length of encrypted part, send concatenation of the two parts
         client_message[1:5] = util.int_to_binary(len(client_message_encrypted), 4)
         self.connection.send(client_message + client_message_encrypted)
+
+        print "Sent payload from client"
 
     # Set the listener to be called on receiving payload
     def add_payload_listener(self, listener):
