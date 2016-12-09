@@ -13,7 +13,7 @@ class Client:
 
     def __init__(self, certificate, user_id, password):
 
-        self.cert = 0  # Client certificate
+        self.cert = 0  # Client certificate --REPLAY: DON'T KNOW THIS
         self.status = 0  # Status of the connection
         self.server_random = None  # Received server random
         self.client_random = ''  # Generated client random, empty string for easy +='ing
@@ -22,17 +22,57 @@ class Client:
         self.certificate_required = None  # True if server requires certificate
         self.master_secret = None  # The generated master secret
         self.connection = None  # The connection to the server
-        self.userID = user_id  # This client's user ID
-        self.password = password  # This client's password
+        self.userID = user_id  # This client's user ID --REPLAY: DON'T KNOW THIS
+        self.password = None  # This client's password --REPLAY: DON'T KNOW THIS
         self.payload_listener = None  # Listener to be called on receiving payload
         self.buffer = bytearray()  # The receive buffer
+
+        self.eavesdropped_data = '030000054d00062d2d2d2d2d424547494e2043455254494649434154452d2d2d2d2d0a4d4949445' \
+                                 '37a43434172536741774942416749424254414e42676b71686b6947397730424151734641444342' \
+                                 '6d54454c4d416b474131554542684d43516b55780a456a415142674e564241674d4355467564486' \
+                                 '46c636e426c626a45534d424147413155454277774a5157353064325679634756754d524d774551' \
+                                 '59445651514b0a444170565157353064325679634756754d513877445159445651514c44415a4e5' \
+                                 '4314e4253554d78446a414d42674e5642414d4d42573979615739754d5377770a4b67594a4b6f5a' \
+                                 '496876634e41516b424668316c6333526c596d46754c6d3131626d6c6a615739416457467564486' \
+                                 '46c636e426c626935695a544165467730780a4e6a45784d444d784d6a45774e546861467730784e' \
+                                 '7a45784d444d784d6a45774e5468614d49472f4d517377435159445651514745774a43525445534' \
+                                 'd4241470a413155454341774a5157353064325679634756754d524977454159445651514844416c' \
+                                 '42626e52335a584a775a573478457a415242674e5642416f4d436c56420a626e52335a584a775a5' \
+                                 '734784c54417242674e564241734d4a454e766258423164475679494746755a43424f5a58523362' \
+                                 '334a7249464e6c59335679615852350a49454e7664584a7a5a5445584d425547413155454177774' \
+                                 'f63484a76616d566a6443316a62476c6c626e51784b7a417042676b71686b694739773042435145' \
+                                 '570a484842796232706c59335174593278705a57353051485668626e52335a584a775a573475596' \
+                                 'd5577675a38774451594a4b6f5a496876634e41514542425141440a675930414d49474a416f4742' \
+                                 '414e686236516767556e6f7a366665795458477166676d63465151376a6d766959496f316b54445' \
+                                 '5496a615336724e69495533760a6e613134397a5a4f676b5a3774587a615951733159686859762b' \
+                                 '44742f6d6d3037734c76567565305a75413933452b4b766b6b305a4c4e33374b3241424557560a7' \
+                                 '249534b372f3846716e424c705530704f336c625954696545545177724e6f544235415539654f59' \
+                                 '434f75417755376f533668357276467641674d424141476a0a657a42354d416b474131556445775' \
+                                 '1434d4141774c41594a59495a49415962345167454e42423857485539775a573554553077675232' \
+                                 '56755a584a686447566b0a49454e6c636e52705a6d6c6a5958526c4d42304741315564446751574' \
+                                 '242516979636f344b6a6149714f5277653967432b796643556c42766c7a416642674e560a48534d' \
+                                 '4547444157674253695179517a2f5864766a6552564e706f6159313534357563374a54414e42676' \
+                                 'b71686b6947397730424151734641414f426751425a0a336f375439565044684d31653231592f76' \
+                                 '6d4176614850634d684d522f72714479592f76474369646a5641653637562b637472517a6b30723' \
+                                 '7736b79366431520a62704139474f6757306546536e7869342b56494350514f537546566933426d' \
+                                 '546b4d456f6f784670774f37622f71777168474348663837496d4d73795a79456e0a6236304d5a6' \
+                                 '4364c6c45696b6747375542307368756a4d41627550316777686761346e7a384b355556673d3d0a' \
+                                 '2d2d2d2d2d454e442043455254494649434154452d2d2d2d2d008069ac9f1eca0bdc2a750ba6b73' \
+                                 '49c4a20b802315917786673ed3dbe627a44d022338d53a6b23b6e46367fe7f7c18d1333a36b1fe2' \
+                                 '09c4243ef44cd7c738cca707da83fd885aa8ac75e8ae24245b3899459c0fa2c2b3f2a178ff63321' \
+                                 'd52246cea0dafd671cdbf3efb942494bc22ac479b8802522a872ab1f24f9842d1531342a1aee25c' \
+                                 'd52506aaa50bd185133b105d4bf5e4cf01f0f0'
 
         self.is_connected = False  # True if there is currently a connection setup to the server
 
         # Read certificate from file, chop off final newline
-        with open(certificate, 'rt') as f:
-            self.cert = util.text_to_binary(f.read())
-            self.cert = self.cert[0:len(self.cert)-1]
+        # with open(certificate, 'rt') as f:
+        #    self.cert = util.text_to_binary(f.read())
+        #    self.cert = self.cert[0:len(self.cert)-1]
+
+        # Get this from eavesdrop instead!
+        self.cert = util.hex_string_to_binary(self.eavesdropped_data[14:2420], 1203)
+
         return
 
     # Start listening for, processing and replying to connection setup messages
@@ -298,7 +338,10 @@ class Client:
         client_key_exchange[7:1210] = self.cert
         client_key_exchange[1210:1212] = util.int_to_binary(key_length, 2)
         client_key_exchange[1212:1212+key_length] = util.int_to_binary(pre_master_encrypt, key_length)
-        client_key_exchange[1212+key_length:1232+key_length] = util.int_to_binary(sha1.sha1(self.userID + self.password), 20)
+        # -- REPLAY get hashed login info from eavesdrop
+        hashed_login = util.hex_string_to_binary(self.eavesdropped_data[-44:-4], 20)
+        client_key_exchange[1212+key_length:1232+key_length] = hashed_login
+        # client_key_exchange[1212+key_length:1232+key_length] = util.int_to_binary(sha1.sha1(self.userID + self.password), 20)
         client_key_exchange[1232+key_length:1234+key_length] = '\xF0\xF0'
 
         # Calculate and store the master_secret
@@ -368,7 +411,7 @@ class Client:
 
 # For testing purposes
 if __name__ == '__main__':
-    client = Client('client-05.pem', 'project-client', 'Konklave123')
+    client = Client(None, None, None) # --REPLAY: NO ARGS
     error_connect = client.connect('localhost', 8970)
     if error_connect == 0:
         client.send_payload('\x01\x02')

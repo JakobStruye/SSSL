@@ -63,6 +63,18 @@ def hex_to_binary(a, length):
     return a_bytes
 
 
+# Converts string representation of hex to binary string, padded to length bytes
+def hex_string_to_binary(a, length):
+    if length < 1:
+        return None
+    a_bytes = length * [None]
+    i = length
+    while i > 0:
+        i -= 1
+        a_bytes[i] = int(a[2*i:2*i+2], 16) & 0xFF
+    return a_bytes
+
+
 # Converts bytes to string
 def binary_to_text(bytes):
     result = ''
