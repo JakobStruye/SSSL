@@ -10,7 +10,6 @@ import threading
 
 
 class Client:
-
     def __init__(self, certificate, user_id, password):
 
         self.cert = 0  # Client certificate
@@ -26,13 +25,15 @@ class Client:
         self.password = password  # This client's password
         self.payload_listener = None  # Listener to be called on receiving payload
         self.buffer = bytearray()  # The receive buffer
+        self.secure_error_count = 0
+
 
         self.is_connected = False  # True if there is currently a connection setup to the server
 
         # Read certificate from file, chop off final newline
         with open(certificate, 'rt') as f:
             self.cert = util.text_to_binary(f.read())
-            self.cert = self.cert[0:len(self.cert)-1]
+            self.cert = self.cert[0:len(self.cert) - 1]
         return
 
     # Start listening for, processing and replying to connection setup messages
@@ -48,15 +49,15 @@ class Client:
             self.buffer.extend(bytes_buf)  # Add input to receive buffer
 
             if len(self.buffer) < 5:
-                continue # Don't have length yet, can't do anything
+                continue  # Don't have length yet, can't do anything
 
             next_length = util.binary_to_int(self.buffer[1:5])
 
             if len(self.buffer) < next_length + 5:
-                continue # Don't have full packet yet, can't do anything
+                continue  # Don't have full packet yet, can't do anything
 
             # Take packet from the receive buffer
-            packet = self.buffer[:next_length+5]
+            packet = self.buffer[:next_length + 5]
 
             # Decide how to process based on first byte and connection status. Send reply if needed.
             if packet[0] == ord('\x06'):
@@ -65,7 +66,7 @@ class Client:
             elif self.status == 2:
                 error = self.process_hello(packet, conn)
                 if error:
-                    self.send_error(conn, error)
+                    self.send_error_setup(conn, error)
                     return error
                 conn.send(self.create_key_exchange())
                 conn.send(self.create_finished())
@@ -74,28 +75,28 @@ class Client:
             elif self.status == 5:
                 # Server_finished is encrypted, decrypt first! (first 5 bytes not encrypted)
                 if next_length % 24 != 0:
-                    #Bad length of encrypted part
-                    self.send_error(conn, '\x0A')
+                    # Bad length of encrypted part
+                    self.send_error_setup(conn, '\x0A')
                     return
                 try:
-                    decrypt_buf = util.decrypt_message(packet[5:next_length+5], self.master_secret)
+                    decrypt_buf = util.decrypt_message(packet[5:next_length + 5], self.master_secret)
                 except:
-                    self.send_error(conn, '\x0A')
+                    self.send_error_setup(conn, '\x0A')
                     return
 
                 error = self.process_finished(packet[0:5] + decrypt_buf, conn)
                 if error:
-                    self.send_error(conn, error)
+                    self.send_error_setup(conn, error)
                     return error
                 self.status = -1
-                self.buffer = self.buffer[next_length+5:]
+                self.buffer = self.buffer[next_length + 5:]
                 print 'Connection setup'
                 self.is_connected = True
 
                 # Put payload listener in separate thread, keep main thread available for initiating sends
                 listen_thread = threading.Thread(target=self.process_payloads, args=(conn,))
                 listen_thread.start()
-                return 0 # success
+                return 0  # success
             self.buffer = self.buffer[next_length + 5:]  # Remove processed packet from buffer
 
     # Start listening for, processing and replying to payload messages
@@ -118,27 +119,36 @@ class Client:
 
             if len(self.buffer) < 5:
                 skip_recv = False
-                continue # Don't have length yet, can't do anything
+                continue  # Don't have length yet, can't do anything
             next_length = util.binary_to_int(self.buffer[1:5])
 
             if len(self.buffer) < next_length + 5:
                 skip_recv = False
-                continue # Don't have full packet yet, can't do anything
+                continue  # Don't have full packet yet, can't do anything
 
-            packet = self.buffer[:next_length+5]
+            packet = self.buffer[:next_length + 5]
 
             # Check for error msg before encrypting as they are plain
             if packet[0] == ord('\x06'):
                 self.process_error(packet, conn)
-                return
+                skip_recv = True
+                self.buffer = self.buffer[next_length + 5:]  # Remove processed packet from buffer
+                continue
 
             # Definitely encrypted, decrypt everything but first 5 bytes
             try:
-                decrypted = packet[0:5] + util.decrypt_message(packet[5:next_length+5], self.master_secret)
+                decrypted = packet[0:5] + util.decrypt_message(packet[5:next_length + 5], self.master_secret)
             except:
-                self.send_error(conn, '\x0A')
-                return
+                self.send_error_secure(conn, '\x0A')
+                skip_recv = True
+                self.buffer = self.buffer[next_length + 5:]  # Removed processed packet from buffer
+                continue
             error = self.process_payload(decrypted, conn)
+            if error:
+                self.send_error_secure(conn, error)
+                skip_recv = True
+                self.buffer = self.buffer[next_length + 5:]  # Removed processed packet from buffer
+                continue
             skip_recv = True
             self.buffer = self.buffer[next_length + 5:]  # Remove processed packet from buffer
 
@@ -172,7 +182,8 @@ class Client:
         if server_cert.get_issuer().commonName != 'orion' or server_cert.has_expired():
             return '\x07'
         # Extract server public key
-        self.server_pubkey = Crypto.PublicKey.RSA.importKey(M2Crypto.X509.load_cert_string(message[44:1247]).get_pubkey().as_der())
+        self.server_pubkey = Crypto.PublicKey.RSA.importKey(
+            M2Crypto.X509.load_cert_string(message[44:1247]).get_pubkey().as_der())
         # Validate some more bytes
         if not (message[1247] == ord('\xF0') and message[1248] == ord('\xF0')):
             return '\x06'
@@ -191,8 +202,8 @@ class Client:
             return '\x01'
         if not message[5:7] == self.session_id:
             return '\x04'
-        #skip state
-        if not (message[8] == ord('\xF0') and message[9] == ord('\xF0')) :
+        # skip state
+        if not (message[8] == ord('\xF0') and message[9] == ord('\xF0')):
             return '\x06'
         return None
 
@@ -207,13 +218,10 @@ class Client:
 
     # Process incoming error message during  setup phase and close connection
     def process_error(self, message, conn):
-        print "TODO"
-        """if len(message) != 10:
+        if len(message) != 10:
             print 'Malformed error!'
             return
         print "Received error:", util.get_error_message(message[7])
-        conn.close()
-        return message[7]"""
 
     # Process incoming payload
     def process_payload(self, message, conn):
@@ -222,41 +230,41 @@ class Client:
         # Validate some bytes
         message_id = message[0]
         if not util.is_known_message_id(message_id):
-            return '\x02', None
+            return '\x02'
         if not message[0] == ord('\x07'):
-            return '\x01', None
+            return '\x01'
         if not message[5:7] == self.session_id:
-            return '\x04', None
+            return '\x04'
 
         # Get the unencrypted payload length
         length = util.binary_to_int(message[7:11])
 
         if len(message) < 12 + length:
-            return '\x03', None
+            return '\x03'
         # Extract the payload
-        payload = message[11:11+length]
+        payload = message[11:11 + length]
 
-        if not (message[11+length] == ord('\xF0') and message[12+length] == ord('\xF0')) :
-            return '\x06', None
+        if not (message[11 + length] == ord('\xF0') and message[12 + length] == ord('\xF0')):
+            return '\x06'
 
         # If no listener, nothing to do
         if self.payload_listener is None:
-            return None, None
+            return None
 
         # Generate reply
-        reply = self.payload_listener.callback_client(payload, self)
-        return None, reply
+        self.payload_listener.callback(payload, self)
+        return None
 
     # Send an error message with a given error code, and close connection
-    def send_error(self, conn, error_code):
+    def send_error_setup(self, conn, error_code):
 
         error_message = bytearray(10 * '\x00', 'hex')
         error_message[0] = '\x06'
-        error_message[1:5] = util.int_to_binary(5,4)
+        error_message[1:5] = util.int_to_binary(5, 4)
         if self.session_id:
             error_message[5:7] = self.session_id
         else:
-            error_message[5:7] = '\x00\x00' # session ID not yet generated, can't send it
+            error_message[5:7] = '\x00\x00'  # session ID not yet generated, can't send it
         error_message[7] = error_code
         error_message[8:10] = '\xF0\xF0'
 
@@ -265,16 +273,38 @@ class Client:
         conn.close()
         return
 
+    # Send an error message with a given error code during secure phase
+    def send_error_secure(self, conn, error_code):
+
+        error_message = bytearray(10 * '\x00', 'hex')
+        error_message[0] = '\x06'
+        error_message[1:5] = util.int_to_binary(5, 4)
+        if self.session_id:
+            error_message[5:7] = self.session_id
+        else:
+            error_message[5:7] = '\x00\x00'  # session ID not yet generated, can't send it
+        error_message[7] = error_code
+        error_message[8:10] = '\xF0\xF0'
+
+        print 'Sending error:', util.get_error_message(error_message[7])
+        conn.send(error_message)
+
+        self.secure_error_count += 1
+        if self.secure_error_count >= 10:
+            self.is_connected = False
+            conn.close()
+        return
+
     # Create a client_hello packet
     def create_hello(self):
         client_hello = bytearray(43 * '\x00', 'hex')
         client_hello[0] = '\x01'
-        client_hello[1:5] = util.int_to_binary(38,4)
+        client_hello[1:5] = util.int_to_binary(38, 4)
         client_hello[5] = '\x64'
         client_hello[6] = '\x65'
         # Generate client_random bytes
-        for i in range(7,39):
-            self.client_random += chr(random.randint(0,255))
+        for i in range(7, 39):
+            self.client_random += chr(random.randint(0, 255))
 
         client_hello[7:39] = util.text_to_binary(self.client_random)
         client_hello[39:41] = '\x00\x2F'
@@ -286,28 +316,32 @@ class Client:
         # First generate pre_master
         pre_master = ""
         for _ in range(48):
-            pre_master += chr(random.randint(0,127))
+            pre_master += chr(random.randint(0, 127))
         # Encrypt it and get the encrypted length
-        pre_master_encrypt = rsa.encrypt_rsa(rsa.text_to_decimal(pre_master), self.server_pubkey.e, self.server_pubkey.n)
+        pre_master_encrypt = rsa.encrypt_rsa(rsa.text_to_decimal(pre_master), self.server_pubkey.e,
+                                             self.server_pubkey.n)
         key_length = util.get_length_in_bytes(pre_master_encrypt)
 
-        client_key_exchange = bytearray((1234 + key_length)  * '\x00', 'hex')
+        client_key_exchange = bytearray((1234 + key_length) * '\x00', 'hex')
         client_key_exchange[0] = '\x03'
-        client_key_exchange[1:5] = util.int_to_binary(1229+key_length, 4)
+        client_key_exchange[1:5] = util.int_to_binary(1229 + key_length, 4)
         client_key_exchange[5:7] = self.session_id
         client_key_exchange[7:1210] = self.cert
         client_key_exchange[1210:1212] = util.int_to_binary(key_length, 2)
-        client_key_exchange[1212:1212+key_length] = util.int_to_binary(pre_master_encrypt, key_length)
-        client_key_exchange[1212+key_length:1232+key_length] = util.int_to_binary(sha1.sha1(self.userID + self.password), 20)
-        client_key_exchange[1232+key_length:1234+key_length] = '\xF0\xF0'
+        client_key_exchange[1212:1212 + key_length] = util.int_to_binary(pre_master_encrypt, key_length)
+        hash_credentials = sha1.sha1(self.userID + self.password)
+        hash_credentials_nonced = sha1.sha1(sha1.digestToString(hash_credentials) + self.server_random)
+        client_key_exchange[1212 + key_length:1232 + key_length] = util.int_to_binary(
+            hash_credentials_nonced, 20)
+        client_key_exchange[1232 + key_length:1234 + key_length] = '\xF0\xF0'
 
         # Calculate and store the master_secret
         self.master_secret = \
             sha1.sha1(
                 sha1.digestToString(sha1.sha1(pre_master + sha1.digestToString(
-                    sha1.sha1('A' + pre_master + self.client_random + self.server_random)))) \
+                    sha1.sha1('A' + pre_master + self.client_random + self.server_random))))
                 + sha1.digestToString(sha1.sha1(pre_master + sha1.digestToString(
-                    sha1.sha1('BB' + pre_master + self.client_random + self.server_random)))) \
+                    sha1.sha1('BB' + pre_master + self.client_random + self.server_random))))
                 + sha1.digestToString(sha1.sha1(pre_master + sha1.digestToString(
                     sha1.sha1('CCC' + pre_master + self.client_random + self.server_random)))))
 
@@ -330,8 +364,8 @@ class Client:
         self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.connection.connect((host, port))
         self.connection.send(self.create_hello())
-        self.status = 2 # Hello was sent, so status 2
-        return self.process(self.connection) # Process will take care of other sends
+        self.status = 2  # Hello was sent, so status 2
+        return self.process(self.connection)  # Process will take care of other sends
 
     # Close the existing connection
     def disconnect(self):
@@ -366,6 +400,7 @@ class Client:
     def add_payload_listener(self, listener):
         self.payload_listener = listener
 
+
 # For testing purposes
 if __name__ == '__main__':
     client = Client('client-05.pem', 'project-client', 'Konklave123')
@@ -373,5 +408,3 @@ if __name__ == '__main__':
     if error_connect == 0:
         client.send_payload('\x01\x02')
         client.disconnect()
-
-
