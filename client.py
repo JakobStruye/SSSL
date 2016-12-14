@@ -61,10 +61,11 @@ class Client:
                                  '49c4a20b802315917786673ed3dbe627a44d022338d53a6b23b6e46367fe7f7c18d1333a36b1fe2' \
                                  '09c4243ef44cd7c738cca707da83fd885aa8ac75e8ae24245b3899459c0fa2c2b3f2a178ff63321' \
                                  'd52246cea0dafd671cdbf3efb942494bc22ac479b8802522a872ab1f24f9842d1531342a1aee25c' \
-                                 'd52506aaa50bd185133b105d4bf5e4cf01f0f0'
+                                 'd52506aaa50bd185133b105d4bf5e4cf01f0f0' #--REPLAY
 
         self.is_connected = False  # True if there is currently a connection setup to the server
 
+        # --REPLAY
         # Read certificate from file, chop off final newline
         # with open(certificate, 'rt') as f:
         #    self.cert = util.text_to_binary(f.read())
@@ -338,7 +339,7 @@ class Client:
         client_key_exchange[7:1210] = self.cert
         client_key_exchange[1210:1212] = util.int_to_binary(key_length, 2)
         client_key_exchange[1212:1212+key_length] = util.int_to_binary(pre_master_encrypt, key_length)
-        # -- REPLAY get hashed login info from eavesdrop
+        # --REPLAY get hashed login info from eavesdrop
         hashed_login = util.hex_string_to_binary(self.eavesdropped_data[-44:-4], 20)
         client_key_exchange[1212+key_length:1232+key_length] = hashed_login
         # client_key_exchange[1212+key_length:1232+key_length] = util.int_to_binary(sha1.sha1(self.userID + self.password), 20)
